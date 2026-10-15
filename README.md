@@ -35,6 +35,75 @@ colcon build --packages-select pioneer_control
 ```bash
 source install/setup.bash
 ```
+
+🤖 CoppeliaSim Robot Setup (Required Script)
+By default, the Pioneer P3DX in CoppeliaSim runs an automated Braitenberg obstacle-avoidance script. To allow ROS 2 to control the motors and read the sensors, you must replace this default brain with a custom ROS 2 bridge script.
+
+1-Drag a Pioneer P3DX robot into your CoppeliaSim scene.
+
+2-In the Scene Hierarchy, double-click the small paper/script icon next to the Pioneer robot.
+
+3-Delete all the existing Lua code inside that window.
+
+4-Paste the following script and close the window:
+```Lua
+sim = require('sim')
+simROS2 = require('simROS2')
+
+function sysCall_init()
+    motorLeft = sim.getObject("../leftMotor")
+    motorRight = sim.getObject("../rightMotor")
+    
+    usensors = {}
+    for i=1,16,1 do
+        usensors[i] = sim.getObject("../ultrasonicSensor",{index=i-1})
+    end
+    
+    wheel_radius = 0.0975
+    wheel_distance = 0.381 
+    target_vL = 0
+    target_vR = 0
+
+    sub = simROS2.createSubscription('/cmd_vel', 'geometry_msgs/msg/Twist', 'cmd_vel_callback')
+    
+    -- Using String to bypass the missing MultiArray C++ compilation error
+    pub = simROS2.createPublisher('/ultrasonic_sensors', 'std_msgs/msg/String')
+end
+
+function cmd_vel_callback(msg)
+    local v = msg.linear.x
+    local w = msg.angular.z
+    target_vL = (v - w * wheel_distance / 2) / wheel_radius
+    target_vR = (v + w * wheel_distance / 2) / wheel_radius
+end
+
+function sysCall_actuation()
+    sim.setJointTargetVelocity(motorLeft, target_vL)
+    sim.setJointTargetVelocity(motorRight, target_vR)
+    
+    local sensor_data = {}
+    for i=1,16,1 do
+        local res, dist = sim.readProximitySensor(usensors[i])
+        if res > 0 then
+            sensor_data[i] = string.format("%.3f", dist) -- Format to 3 decimal places
+        else
+            sensor_data[i] = "1.000" -- Default max distance if nothing is detected
+        end
+    end
+    
+    -- Join all 16 distances into a single comma-separated string
+    local msg = {}
+    msg.data = table.concat(sensor_data, ",")
+    simROS2.publish(pub, msg)
+end
+
+function sysCall_cleanup()
+    sim.setJointTargetVelocity(motorLeft, 0)
+    sim.setJointTargetVelocity(motorRight, 0)
+end
+```
+
+
 🗺️ CoppeliaSim Scene Setup (Important)
 To fully test the robot's capabilities, your CoppeliaSim scene should contain blocks or obstacles for the robot to navigate around.
 
